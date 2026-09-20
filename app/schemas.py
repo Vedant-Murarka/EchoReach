@@ -1,5 +1,5 @@
 from pydantic import BaseModel, ConfigDict, EmailStr
-from typing import List, Optional
+from typing import List, Optional, Any, Dict
 from datetime import datetime
 
 class ResearchFactSchema(BaseModel):
@@ -45,9 +45,26 @@ class ReplySchema(BaseModel):
     classification: str
     confidence: float
     reasoning: Optional[str] = None
+    is_corrected: Optional[int] = 0
+    corrected_classification: Optional[str] = None
     created_at: datetime
 
     model_config = ConfigDict(from_attributes=True)
+
+class ClassifierFeedbackSchema(BaseModel):
+    id: int
+    reply_id: Optional[int] = None
+    raw_text: str
+    predicted_class: str
+    corrected_class: str
+    notes: Optional[str] = None
+    created_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+class ClassifierCorrectionRequest(BaseModel):
+    corrected_classification: str
+    notes: Optional[str] = "Human operator override"
 
 class LeadBase(BaseModel):
     name: str

@@ -50,7 +50,7 @@ class Touch(Base):
     subject = Column(String(255), nullable=True)
     body = Column(Text, nullable=False)
     
-    # Status: draft, pending_approval, approved, rejected, sent
+    # Status: draft, pending_approval, approved, rejected, sent, suppressed, cap_exceeded
     status = Column(String(50), default="pending_approval", index=True)
     sent_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
@@ -107,9 +107,23 @@ class Reply(Base):
     classification = Column(String(50), nullable=False)
     confidence = Column(Float, default=0.95)
     reasoning = Column(Text, nullable=True)
+    is_corrected = Column(Integer, default=0) # 0 = no, 1 = corrected by human
+    corrected_classification = Column(String(50), nullable=True)
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
 
     lead = relationship("Lead", back_populates="replies")
+
+class ClassifierFeedback(Base):
+    """Stores human feedback & corrections to feed back as dynamic few-shot training examples (Self-Improving Classifier)"""
+    __tablename__ = "classifier_feedback"
+
+    id = Column(Integer, primary_key=True, index=True)
+    reply_id = Column(Integer, ForeignKey("replies.id"), nullable=True)
+    raw_text = Column(Text, nullable=False)
+    predicted_class = Column(String(50), nullable=False)
+    corrected_class = Column(String(50), nullable=False)
+    notes = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
 
 class DailySendCounter(Base):
     __tablename__ = "daily_send_counter"
