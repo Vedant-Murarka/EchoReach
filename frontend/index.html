@@ -1,0 +1,228 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>EchoReach — Autonomous Sales Outreach Agent Dashboard</title>
+  <link rel="stylesheet" href="/static/css/style.css" />
+  <!-- Google Fonts Inter -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+  <div class="app-container">
+    <!-- Sidebar Navigation -->
+    <aside class="sidebar">
+      <div class="logo-container">
+        <div class="logo-icon">⚡</div>
+        <div class="logo-text">
+          <h1>EchoReach</h1>
+          <p>Multi-Agent SDR</p>
+        </div>
+      </div>
+
+      <nav class="nav-menu">
+        <div class="nav-item active" data-view="pipeline">
+          <span>📊</span> Pipeline Board
+        </div>
+        <div class="nav-item" data-view="approval">
+          <span>🛡️</span> Approval Queue
+          <span class="nav-badge" id="nav-badge-approval" style="display: none;">0</span>
+        </div>
+        <div class="nav-item" data-view="trace">
+          <span>🧠</span> Reasoning Trace
+        </div>
+        <div class="nav-item" data-view="simulator">
+          <span>🎭</span> Reply Simulator
+        </div>
+        <div class="nav-item" data-view="analytics">
+          <span>📈</span> Analytics
+        </div>
+      </nav>
+
+      <div class="sidebar-footer">
+        <div class="status-pill">
+          <div class="status-dot"></div>
+          <span>LangGraph Engine Live</span>
+        </div>
+      </div>
+    </aside>
+
+    <!-- Main Content Area -->
+    <main class="main-content">
+      <!-- Header -->
+      <header class="top-header">
+        <div class="header-title">
+          <h2 id="header-title-text">Lead Pipeline Board</h2>
+        </div>
+        <div class="header-actions">
+          <div class="guardrail-chip">
+            <span>🛡️</span>
+            <span id="guardrail-cap-counter">Daily Cap: 0/50</span>
+          </div>
+          <button class="btn btn-secondary" onclick="refreshAllData()">🔄 Refresh</button>
+          <button class="btn btn-primary" onclick="document.getElementById('modal-new-lead').classList.add('active')">+ Add Lead</button>
+        </div>
+      </header>
+
+      <!-- Content Views -->
+      <div class="content-body">
+        <!-- 1. Pipeline Board View -->
+        <section id="view-pipeline" class="view-section active">
+          <div id="kanban-container" class="kanban-board">
+            <!-- Dynamically populated -->
+          </div>
+        </section>
+
+        <!-- 2. Human Approval Queue View -->
+        <section id="view-approval" class="view-section">
+          <div id="approval-queue-list">
+            <!-- Dynamically populated -->
+          </div>
+        </section>
+
+        <!-- 3. Lead Detail & Timeline Inspector -->
+        <section id="view-timeline" class="view-section">
+          <div id="lead-detail-content">
+            <!-- Dynamically populated -->
+          </div>
+        </section>
+
+        <!-- 4. Live Reasoning Trace Feed -->
+        <section id="view-trace" class="view-section">
+          <div class="glass-card" style="padding: 24px;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+              <div>
+                <h3 style="font-size: 18px; font-weight: 600;">Autonomous Agent Decision Trace</h3>
+                <p style="font-size: 12px; color: var(--text-muted); margin-top: 2px;">Real-time feed of multi-agent hand-offs, research extraction, and retry loops.</p>
+              </div>
+              <span class="badge badge-green">Live Polling Active</span>
+            </div>
+            <div id="reasoning-trace-feed" class="reasoning-feed">
+              <!-- Dynamically populated -->
+            </div>
+          </div>
+        </section>
+
+        <!-- 5. Reply Simulator & Self-Improving Studio -->
+        <section id="view-simulator" class="view-section">
+          <div class="glass-card" style="padding: 24px; margin-bottom: 24px;">
+            <div style="display: flex; justify-content: space-between; align-items: center;">
+              <div>
+                <h3 style="font-size: 18px; font-weight: 600;">Prospect Reply Simulator & Self-Improving Studio</h3>
+                <p style="font-size: 13px; color: var(--text-muted); margin-top: 4px;">Simulate replies to exercise the 5-class intent classifier and train the model via human operator feedback.</p>
+              </div>
+              <button class="btn btn-primary" onclick="openSimulatorModal(AppState.leads[0]?.id || 1)">🎭 Trigger Simulated Reply</button>
+            </div>
+          </div>
+
+          <h3 style="font-size: 16px; margin-bottom: 12px;">Recent Prospect Replies & Model Classifications</h3>
+          <div id="simulator-replies-list">
+            <!-- Dynamically populated -->
+          </div>
+        </section>
+
+        <!-- 6. Analytics View -->
+        <section id="view-analytics" class="view-section">
+          <div id="analytics-container">
+            <!-- Dynamically populated -->
+          </div>
+        </section>
+      </div>
+    </main>
+  </div>
+
+  <!-- Modal: Simulate Reply -->
+  <div id="modal-simulator" class="modal-overlay">
+    <div class="modal-box">
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+        <h3 style="font-size: 18px; font-weight: 600;">Trigger Prospect Persona Reply</h3>
+        <button class="modal-close btn btn-secondary" style="padding: 4px 8px;">✕</button>
+      </div>
+      <form id="sim-form">
+        <div class="form-group">
+          <label>Target Lead</label>
+          <select id="sim-lead-select" class="form-control">
+            <!-- Populated via JS -->
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Prospect Persona</label>
+          <select id="sim-persona-select" class="form-control">
+            <option value="eager_buyer">Eager Buyer (Interested - Asks for demo/meeting)</option>
+            <option value="skeptic">Skeptic (Objection - Challenges tech stack & integrations)</option>
+            <option value="out_of_office">Out of Office (OOO - Auto-reply pause trigger)</option>
+            <option value="hard_no">Hard No (Not Interested - Unsubscribe request)</option>
+            <option value="ghost">Ghost (No Reply - Cadence timeout trigger)</option>
+          </select>
+        </div>
+        <div style="display: flex; justify-content: flex-end; gap: 10px; margin-top: 24px;">
+          <button type="button" class="btn btn-secondary modal-close">Cancel</button>
+          <button type="submit" class="btn btn-primary">Simulate & Classify</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Modal: New Lead -->
+  <div id="modal-new-lead" class="modal-overlay">
+    <div class="modal-box">
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+        <h3 style="font-size: 18px; font-weight: 600;">Add New Target Lead</h3>
+        <button class="modal-close btn btn-secondary" style="padding: 4px 8px;">✕</button>
+      </div>
+      <form id="new-lead-form" onsubmit="handleCreateLead(event)">
+        <div class="form-group">
+          <label>Prospect Name</label>
+          <input type="text" id="new-lead-name" class="form-control" required placeholder="e.g. Liam Scott" />
+        </div>
+        <div class="form-group">
+          <label>Job Title</label>
+          <input type="text" id="new-lead-title" class="form-control" required placeholder="e.g. VP of Sales" />
+        </div>
+        <div class="form-group">
+          <label>Company Name</label>
+          <input type="text" id="new-lead-company" class="form-control" required placeholder="e.g. ScaleTech Labs" />
+        </div>
+        <div class="form-group">
+          <label>Email Address</label>
+          <input type="email" id="new-lead-email" class="form-control" required placeholder="e.g. liam@scaletech.io" />
+        </div>
+        <div class="form-group">
+          <label>LinkedIn URL</label>
+          <input type="url" id="new-lead-linkedin" class="form-control" placeholder="https://linkedin.com/in/liamscott" />
+        </div>
+        <div style="display: flex; justify-content: flex-end; gap: 10px; margin-top: 24px;">
+          <button type="button" class="btn btn-secondary modal-close">Cancel</button>
+          <button type="submit" class="btn btn-primary">Create Lead</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <script src="/static/js/api.js"></script>
+  <script src="/static/js/app.js"></script>
+  <script>
+    async function handleCreateLead(e) {
+      e.preventDefault();
+      try {
+        const payload = {
+          name: document.getElementById("new-lead-name").value,
+          title: document.getElementById("new-lead-title").value,
+          company: document.getElementById("new-lead-company").value,
+          email: document.getElementById("new-lead-email").value,
+          linkedin_url: document.getElementById("new-lead-linkedin").value
+        };
+        await ApiService.createLead(payload);
+        showToast("✅ Lead added successfully!");
+        document.getElementById("modal-new-lead").classList.remove("active");
+        e.target.reset();
+        await refreshAllData();
+      } catch (err) {
+        showToast(`Failed to add lead: ${err.message}`, "error");
+      }
+    }
+  </script>
+</body>
+</html>

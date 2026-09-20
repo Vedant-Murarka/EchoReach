@@ -1,23 +1,27 @@
 import os
 import json
+import asyncio
 import logging
 from typing import Optional, Dict, Any, List
 from app.config import settings
 
 logger = logging.getLogger("echoreach.llm")
 
+GROQ_MODELS = ["llama-3.1-8b-instant", "llama3-70b-8192", "llama3-8b-8192", "llama-3.3-70b-versatile", "mixtral-8x7b-32768"]
+GEMINI_MODELS = ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash"]
+
 class LLMClient:
     """
-    Unified LLM Client supporting Google Gemini, Groq, OpenAI, and Anthropic
-    with resilient, zero-crash heuristic fallback when API keys are absent or rate-limited.
+    Unified LLM Client supporting Groq, Google Gemini, OpenAI,
+    with resilient, zero-crash heuristic fallback.
     """
 
     @classmethod
     def get_provider(cls) -> str:
-        if settings.GEMINI_API_KEY:
-            return "gemini"
-        elif settings.GROQ_API_KEY:
+        if settings.GROQ_API_KEY:
             return "groq"
+        elif settings.GEMINI_API_KEY:
+            return "gemini"
         elif settings.OPENAI_API_KEY:
             return "openai"
         elif settings.ANTHROPIC_API_KEY:
@@ -28,58 +32,60 @@ class LLMClient:
     async def generate_text(cls, system_prompt: str, user_prompt: str, temperature: float = 0.2) -> str:
         provider = cls.get_provider()
         
-        # 1. Google Gemini Provider
-        if provider == "gemini":
+        # 1. Groq Provider
+        if (provider == "groq" or settings.GROQ_API_KEY):
             try:
-                from google import genai
-                client = genai.Client(api_key=settings.GEMINI_API_KEY)
-                full_prompt = f"{system_prompt}\n\nUser Request:\n{user_prompt}"
-                response = client.models.generate_content(
-                    model="gemini-2.5-flash",
-                    contents=full_prompt,
-                )
-                if response and response.text:
-                    return response.text.strip()
-            except Exception as e:
-                logger.warning(f"Gemini API call failed ({e}). Falling back to next available provider/mock.")
+                def _call_groq():
+                    from groq import Groq
+                    client = Groq(api_key=settings.GROQ_API_KEY)
+                    for model in GROQ_MODELS:
+                        try:
+                            chat_completion = client.chat.completions.create(
+                                messages=[
+                                    {"role": "system", "content": system_prompt},
+                                    {"role": "user", "content": user_prompt}
+                                ],
+                                model=model,
+                                temperature=temperature,
+                            )
+                            if chat_completion.choices and chat_completion.choices[0].message.content:
+                                return chat_completion.choices[0].message.content.strip()
+                        except Exception:
+                            continue
+                    return None
 
-        # 2. Groq Provider (Ultra-fast Llama 3)
-        if provider == "groq" or (provider != "mock" and settings.GROQ_API_KEY):
+                result = await asyncio.wait_for(asyncio.to_thread(_call_groq), timeout=4.0)
+                if result:
+                    return result
+            except Exception as e:
+                logger.debug(f"Groq API fallback: {e}")
+
+        # 2. Google Gemini Provider
+        if settings.GEMINI_API_KEY:
             try:
-                from groq import Groq
-                client = Groq(api_key=settings.GROQ_API_KEY)
-                chat_completion = client.chat.completions.create(
-                    messages=[
-                        {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": user_prompt}
-                    ],
-                    model="llama-3.3-70b-versatile",
-                    temperature=temperature,
-                )
-                if chat_completion.choices and chat_completion.choices[0].message.content:
-                    return chat_completion.choices[0].message.content.strip()
-            except Exception as e:
-                logger.warning(f"Groq API call failed ({e}). Falling back to heuristic generator.")
+                def _call_gemini():
+                    from google import genai
+                    client = genai.Client(api_key=settings.GEMINI_API_KEY)
+                    full_prompt = f"{system_prompt}\n\nUser Request:\n{user_prompt}"
+                    for model_name in GEMINI_MODELS:
+                        try:
+                            resp = client.models.generate_content(
+                                model=model_name,
+                                contents=full_prompt,
+                            )
+                            if resp and resp.text:
+                                return resp.text.strip()
+                        except Exception:
+                            continue
+                    return None
 
-        # 3. OpenAI Provider
-        if settings.OPENAI_API_KEY:
-            try:
-                from openai import OpenAI
-                client = OpenAI(api_key=settings.OPENAI_API_KEY)
-                completion = client.chat.completions.create(
-                    model="gpt-4o-mini",
-                    messages=[
-                        {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": user_prompt}
-                    ],
-                    temperature=temperature
-                )
-                if completion.choices and completion.choices[0].message.content:
-                    return completion.choices[0].message.content.strip()
+                result = await asyncio.wait_for(asyncio.to_thread(_call_gemini), timeout=4.0)
+                if result:
+                    return result
             except Exception as e:
-                logger.warning(f"OpenAI API call failed ({e}).")
+                logger.debug(f"Gemini API fallback: {e}")
 
-        # 4. Built-in Heuristic Fallback (Mock)
+        # 3. Built-in Heuristic Fallback (Mock)
         return cls._heuristic_fallback(system_prompt, user_prompt)
 
     @classmethod

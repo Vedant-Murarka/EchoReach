@@ -1,6 +1,6 @@
 """
 EchoReach Dataset Seeder Script — Member 2 Task
-Seeds database (SQLite / Supabase PostgreSQL) with 15 synthetic leads, plantable research facts, suppression rules, and classifier feedback exemplars.
+Seeds database (SQLite / Supabase PostgreSQL) with 15 synthetic leads, plantable research facts, suppression rules, and classifier feedback exemplars using fast batch commits.
 """
 from app.database import SessionLocal, engine, Base
 from app.models import Lead, ResearchFact, SuppressionList, DailySendCounter, ClassifierFeedback, Reply, Touch, DecisionLog
@@ -192,70 +192,75 @@ def seed_database():
     
     db = SessionLocal()
 
-    # Clear existing data for clean re-seeding
-    db.query(ClassifierFeedback).delete()
-    db.query(Reply).delete()
-    db.query(DecisionLog).delete()
-    db.query(ResearchFact).delete()
-    db.query(Touch).delete()
-    db.query(Lead).delete()
-    db.query(SuppressionList).delete()
-    db.query(DailySendCounter).delete()
-    db.commit()
+    try:
+        # Clear existing data for clean re-seeding
+        db.query(ClassifierFeedback).delete()
+        db.query(Reply).delete()
+        db.query(DecisionLog).delete()
+        db.query(ResearchFact).delete()
+        db.query(Touch).delete()
+        db.query(Lead).delete()
+        db.query(SuppressionList).delete()
+        db.query(DailySendCounter).delete()
 
-    print(f"Seeding {len(SYNTHETIC_LEADS)} synthetic leads...")
+        print(f"Seeding {len(SYNTHETIC_LEADS)} synthetic leads in batch...")
 
-    for lead_data in SYNTHETIC_LEADS:
-        lead = Lead(
-            name=lead_data["name"],
-            title=lead_data["title"],
-            company=lead_data["company"],
-            email=lead_data["email"],
-            linkedin_url=lead_data["linkedin_url"],
-            stage=lead_data["stage"],
-            current_touch_number=1,
-            status="Active"
-        )
-        db.add(lead)
-        db.commit()
-        db.refresh(lead)
-
-        for fact in lead_data.get("facts", []):
-            rf = ResearchFact(
-                lead_id=lead.id,
-                fact_type=fact["type"],
-                content=fact["content"],
-                source=fact["source"],
-                kept_reason="Extracted high-signal company momentum indicator"
+        for lead_data in SYNTHETIC_LEADS:
+            lead = Lead(
+                name=lead_data["name"],
+                title=lead_data["title"],
+                company=lead_data["company"],
+                email=lead_data["email"],
+                linkedin_url=lead_data["linkedin_url"],
+                stage=lead_data["stage"],
+                current_touch_number=1,
+                status="Active"
             )
-            db.add(rf)
+            db.add(lead)
+            db.flush() # populate lead.id without full commit roundtrip
+
+            for fact in lead_data.get("facts", []):
+                rf = ResearchFact(
+                    lead_id=lead.id,
+                    fact_type=fact["type"],
+                    content=fact["content"],
+                    source=fact["source"],
+                    kept_reason="Extracted high-signal company momentum indicator"
+                )
+                db.add(rf)
+
+        # Seed suppression entries for guardrail verification
+        db.add(SuppressionList(email="do-not-contact@suppressedcorp.com", reason="Explicit user opt-out request"))
+        db.add(SuppressionList(domain="blacklisted-domain.com", reason="Domain-wide opt-out policy"))
+
+        # Seed initial classifier feedback exemplars (Self-Improving Classifier Memory)
+        db.add(ClassifierFeedback(
+            raw_text="We already have a dedicated tool for this, but could you send over a 1-pager comparing your security model?",
+            predicted_class="Interested",
+            corrected_class="Objection",
+            notes="Prospect has competitor tool but requested security spec - classify as Objection"
+        ))
+        db.add(ClassifierFeedback(
+            raw_text="I will be away from office until October 2nd. For urgent matters contact team@domain.com",
+            predicted_class="Interested",
+            corrected_class="Out-of-Office",
+            notes="Standard out-of-office message format"
+        ))
+
+        # Single batch commit
         db.commit()
 
-    # Seed suppression entries for guardrail verification
-    db.add(SuppressionList(email="do-not-contact@suppressedcorp.com", reason="Explicit user opt-out request"))
-    db.add(SuppressionList(domain="blacklisted-domain.com", reason="Domain-wide opt-out policy"))
-
-    # Seed initial classifier feedback exemplars (Self-Improving Classifier Memory)
-    db.add(ClassifierFeedback(
-        raw_text="We already have a dedicated tool for this, but could you send over a 1-pager comparing your security model?",
-        predicted_class="Interested",
-        corrected_class="Objection",
-        notes="Prospect has competitor tool but requested security spec - classify as Objection"
-    ))
-    db.add(ClassifierFeedback(
-        raw_text="I will be away from office until October 2nd. For urgent matters contact team@domain.com",
-        predicted_class="Interested",
-        corrected_class="Out-of-Office",
-        notes="Standard out-of-office message format"
-    ))
-    db.commit()
-
-    print("Database seeding completed successfully!")
-    print(f"Total Leads Created: {db.query(Lead).count()}")
-    print(f"Total Research Facts Created: {db.query(ResearchFact).count()}")
-    print(f"Total Suppression Entries: {db.query(SuppressionList).count()}")
-    print(f"Total Classifier Feedback Exemplars: {db.query(ClassifierFeedback).count()}")
-    db.close()
+        print("Database seeding completed successfully!")
+        print(f"Total Leads Created: {db.query(Lead).count()}")
+        print(f"Total Research Facts Created: {db.query(ResearchFact).count()}")
+        print(f"Total Suppression Entries: {db.query(SuppressionList).count()}")
+        print(f"Total Classifier Feedback Exemplars: {db.query(ClassifierFeedback).count()}")
+    except Exception as e:
+        db.rollback()
+        print(f"Error during seeding: {e}")
+        raise
+    finally:
+        db.close()
 
 if __name__ == "__main__":
     seed_database()
