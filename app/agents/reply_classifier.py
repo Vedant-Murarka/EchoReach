@@ -9,7 +9,7 @@ from app.models import ClassifierFeedback
 logger = logging.getLogger("echoreach.reply_classifier")
 
 BASE_FEW_SHOT_EXAMPLES = [
-    {"text": "Thanks for reaching out! Would love to see a demo, can you send your Calendly link?", "class": "Interested", "reasoning": "Explicit request for demo link and meeting scheduling."},
+    {"text": "Sounds great, send me your calendar link!", "class": "Interested", "reasoning": "Explicit request for demo link and meeting scheduling."},
     {"text": "We already use Apollo and ZoomInfo for outreach, how are you different?", "class": "Objection", "reasoning": "Existing tool stack competitor objection."},
     {"text": "I am currently out of the office returning on Sept 25th with limited access to email.", "class": "Out-of-Office", "reasoning": "Standard automated out-of-office autoreply."},
     {"text": "Please remove our domain from your mailing list immediately. Not interested.", "class": "Not Interested", "reasoning": "Direct unsubscribe and decline directive."},
@@ -18,11 +18,11 @@ BASE_FEW_SHOT_EXAMPLES = [
 
 CLASSIFIER_SYSTEM_PROMPT = """You are the EchoReach Autonomous 5-Class Reply Intent Classifier.
 You must classify incoming prospect responses into EXACTLY one of the 5 canonical classes:
-1. 'Interested': Prospect expresses curiosity, agrees to a demo, or asks for a meeting.
-2. 'Objection': Prospect mentions competitor tools, budget constraints, timing hurdles, or asks tough questions.
-3. 'Out-of-Office': Automated auto-reply indicating absence or delayed return.
-4. 'Not Interested': Explicit refusal, request to unsubscribe, or opt-out directive.
-5. 'No Reply': Cadence timer expiration with zero engagement.
+- 'Interested': Prospect expresses curiosity, agrees to a demo, asks for calendar link or meeting.
+- 'Objection': Prospect mentions competitor tools, asks technical integration questions, budget constraints, or raises hurdles.
+- 'Out-of-Office': Automated auto-reply indicating absence or delayed return.
+- 'Not Interested': Explicit refusal, request to unsubscribe, or opt-out directive.
+- 'No Reply': Cadence timer expiration with zero engagement.
 
 Return JSON format:
 {
@@ -33,15 +33,15 @@ Return JSON format:
 
 class ReplyClassifierAgent:
     """
-    Node 5: 5-Class Reply Intent Classifier (with Self-Improving Dynamic Few-Shot Memory)
-    Evaluates prospect intent and self-learns from operator feedback corrections.
+    Node 5: 5-Class Reply Intent Classifier (Rule + LLM Hybrid with Dynamic Few-Shot Memory)
+    Evaluates prospect intent, layers hard rules over LLM reasoning, and self-learns from operator corrections.
     """
 
     @classmethod
     async def run(cls, state: LeadState, db: Optional[Session] = None) -> Dict[str, Any]:
         raw_text = state.get("raw_reply_text", "")
         persona_type = state.get("persona_type", "custom")
-        text_lower = raw_text.lower()
+        text_lower = raw_text.lower().strip()
 
         # 1. Fetch dynamic few-shot feedback examples from database (Self-Improving loop)
         dynamic_examples = list(BASE_FEW_SHOT_EXAMPLES)
@@ -57,40 +57,41 @@ class ReplyClassifierAgent:
             except Exception as e:
                 logger.warning(f"Could not load classifier feedback from DB: {e}")
 
-        # 2. Heuristic Intent Detection (Baseline & Fallback)
-        heuristic_class = "Interested"
-        heuristic_conf = 0.95
-        heuristic_reason = "Prospect expressed strong interest in a conversation or demo."
+        # 2. Hard Rule Pre-Check (Zero-Ambiguity Fast Path)
+        classification = None
+        confidence = 0.95
+        reasoning = ""
 
         if any(term in text_lower for term in ["out of the office", "ooo", "auto-reply", "on annual leave", "away from my desk"]):
-            heuristic_class = "Out-of-Office"
-            heuristic_conf = 0.99
-            heuristic_reason = "Detected explicit automated out-of-office response pattern."
+            classification = "Out-of-Office"
+            confidence = 0.99
+            reasoning = "Detected explicit automated out-of-office response pattern."
         elif any(term in text_lower for term in ["unsubscribe", "remove me", "not interested", "stop emailing", "take me off", "do not contact"]):
-            heuristic_class = "Not Interested"
-            heuristic_conf = 0.98
-            heuristic_reason = "Detected explicit opt-out directive or rejection statement."
-        elif any(term in text_lower for term in ["already use", "already using", "how do you compare", "pricing is high", "integration", "how does it work", "not sure if"]):
-            heuristic_class = "Objection"
-            heuristic_conf = 0.93
-            heuristic_reason = "Prospect raised an objection regarding workflow, integration, or existing vendor."
+            classification = "Not Interested"
+            confidence = 0.98
+            reasoning = "Detected explicit opt-out directive or rejection statement."
+        elif any(term in text_lower for term in ["already use", "already using", "how do you compare", "pricing is high", "how do you integrate", "integrations", "how does it work"]):
+            classification = "Objection"
+            confidence = 0.94
+            reasoning = "Prospect raised an objection regarding workflow, integration, or existing vendor."
         elif any(term in text_lower for term in ["timeout", "cadence elapsed", "no reply", "5 days elapsed"]):
-            heuristic_class = "No Reply"
-            heuristic_conf = 1.00
-            heuristic_reason = "Cadence timeout threshold reached with no response."
-        else:
-            heuristic_class = "Interested"
-            heuristic_conf = 0.95
-            heuristic_reason = "Prospect expressed intent to meet, evaluate, or see a demo."
+            classification = "No Reply"
+            confidence = 1.00
+            reasoning = "Cadence timeout threshold reached with no response."
+        elif any(term in text_lower for term in ["calendar link", "schedule a call", "sounds great", "let's talk", "book a time", "open to a demo"]):
+            classification = "Interested"
+            confidence = 0.96
+            reasoning = "Prospect expressed strong intent to schedule a meeting or demo."
 
-        classification = heuristic_class
-        confidence = heuristic_conf
-        reasoning = heuristic_reason
+        # 3. If ambiguous, invoke LLM classifier with few-shot dynamic memory
+        if not classification:
+            classification = "Interested"
+            confidence = 0.90
+            reasoning = "Evaluated overall positive intent."
 
-        # 3. LLM classification if available
-        if LLMClient.get_provider() != "mock":
-            few_shot_prompt = "\n\n".join([f"Example Text: \"{ex['text']}\"\nClassification: {ex['class']}\nReasoning: {ex['reasoning']}" for ex in dynamic_examples])
-            user_prompt = f"""FEW-SHOT TRAINING EXEMPLARS (including recent human operator corrections):
+            if LLMClient.get_provider() != "mock":
+                few_shot_prompt = "\n\n".join([f"Example Text: \"{ex['text']}\"\nClassification: {ex['class']}\nReasoning: {ex['reasoning']}" for ex in dynamic_examples])
+                user_prompt = f"""FEW-SHOT TRAINING EXEMPLARS:
 {few_shot_prompt}
 
 TARGET PROSPECT REPLY TO CLASSIFY:
@@ -98,16 +99,23 @@ TARGET PROSPECT REPLY TO CLASSIFY:
 
 Classify the target reply into one of: Interested, Objection, Out-of-Office, Not Interested, No Reply."""
 
-            try:
-                llm_res = await LLMClient.generate_json(CLASSIFIER_SYSTEM_PROMPT, user_prompt)
-                valid_classes = ["Interested", "Objection", "Out-of-Office", "Not Interested", "No Reply"]
-                pred = llm_res.get("classification", classification)
-                if pred in valid_classes:
-                    classification = pred
-                    confidence = float(llm_res.get("confidence", 0.95))
-                    reasoning = llm_res.get("reasoning", reasoning)
-            except Exception as e:
-                logger.warning(f"LLM Classification failed ({e}), using heuristic classification.")
+                try:
+                    llm_res = await LLMClient.generate_json(CLASSIFIER_SYSTEM_PROMPT, user_prompt)
+                    valid_classes = {
+                        "interested": "Interested",
+                        "objection": "Objection",
+                        "out-of-office": "Out-of-Office",
+                        "out of office": "Out-of-Office",
+                        "not interested": "Not Interested",
+                        "no reply": "No Reply"
+                    }
+                    raw_pred = str(llm_res.get("classification", "")).strip().lower()
+                    if raw_pred in valid_classes:
+                        classification = valid_classes[raw_pred]
+                        confidence = float(llm_res.get("confidence", 0.95))
+                        reasoning = llm_res.get("reasoning", reasoning)
+                except Exception as e:
+                    logger.debug(f"LLM Classification fallback: {e}")
 
         input_summary = f"Classifying prospect reply ({persona_type}): '{raw_text[:80]}...'"
         reasoning_log = f"5-Class Intent Classifier evaluated reply. Assigned '{classification}' (Confidence: {confidence*100:.0f}%). Few-shot examples in memory: {len(dynamic_examples)}. {reasoning}"
