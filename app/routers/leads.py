@@ -44,16 +44,13 @@ def get_lead_by_id(lead_id: int, db: Session = Depends(get_db)):
     return lead
 
 @router.post("/{lead_id}/run-pipeline")
-async def run_lead_pipeline(lead_id: int, touch_number: int = Query(default=1), db: Session = Depends(get_db)):
+async def run_lead_pipeline(lead_id: int, touch_number: int = Query(default=1), channel: str = Query(default="email"), db: Session = Depends(get_db)):
     lead = db.query(Lead).filter(Lead.id == lead_id).first()
     if not lead:
         raise HTTPException(status_code=404, detail="Lead not found.")
     
-    # 1. Run Research Agent
-    facts = await AgentPipelineService.run_research_agent(db, lead)
-    
-    # 2. Run Drafting Agent & Genericness Checker
-    touch = AgentPipelineService.run_drafting_agent(db, lead, touch_number=touch_number)
+    # Run full LangGraph state machine: Research -> Drafting -> Genericness Check (Retry Loop)
+    facts, touch = await AgentPipelineService.run_research_and_draft_graph(db, lead, touch_number=touch_number, channel=channel)
     
     return {
         "status": "success",
@@ -61,6 +58,7 @@ async def run_lead_pipeline(lead_id: int, touch_number: int = Query(default=1), 
         "lead_stage": lead.stage,
         "facts_extracted": len(facts),
         "generated_touch_id": touch.id,
+        "touch_subject": touch.subject,
         "touch_status": touch.status
     }
 

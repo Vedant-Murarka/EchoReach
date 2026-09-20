@@ -1,9 +1,9 @@
 """
 EchoReach Dataset Seeder Script — Member 2 Task
-Seeds SQLite database with 15 synthetic leads and plantable research facts.
+Seeds database (SQLite / Supabase PostgreSQL) with 15 synthetic leads, plantable research facts, suppression rules, and classifier feedback exemplars.
 """
 from app.database import SessionLocal, engine, Base
-from app.models import Lead, ResearchFact, SuppressionList, DailySendCounter
+from app.models import Lead, ResearchFact, SuppressionList, DailySendCounter, ClassifierFeedback, Reply, Touch, DecisionLog
 
 SYNTHETIC_LEADS = [
     {
@@ -187,13 +187,17 @@ SYNTHETIC_LEADS = [
 ]
 
 def seed_database():
-    print("Initializing SQLite database tables...")
+    print("Initializing database tables...")
     Base.metadata.create_all(bind=engine)
     
     db = SessionLocal()
 
     # Clear existing data for clean re-seeding
+    db.query(ClassifierFeedback).delete()
+    db.query(Reply).delete()
+    db.query(DecisionLog).delete()
     db.query(ResearchFact).delete()
+    db.query(Touch).delete()
     db.query(Lead).delete()
     db.query(SuppressionList).delete()
     db.query(DailySendCounter).delete()
@@ -230,12 +234,27 @@ def seed_database():
     # Seed suppression entries for guardrail verification
     db.add(SuppressionList(email="do-not-contact@suppressedcorp.com", reason="Explicit user opt-out request"))
     db.add(SuppressionList(domain="blacklisted-domain.com", reason="Domain-wide opt-out policy"))
+
+    # Seed initial classifier feedback exemplars (Self-Improving Classifier Memory)
+    db.add(ClassifierFeedback(
+        raw_text="We already have a dedicated tool for this, but could you send over a 1-pager comparing your security model?",
+        predicted_class="Interested",
+        corrected_class="Objection",
+        notes="Prospect has competitor tool but requested security spec - classify as Objection"
+    ))
+    db.add(ClassifierFeedback(
+        raw_text="I will be away from office until October 2nd. For urgent matters contact team@domain.com",
+        predicted_class="Interested",
+        corrected_class="Out-of-Office",
+        notes="Standard out-of-office message format"
+    ))
     db.commit()
 
     print("Database seeding completed successfully!")
     print(f"Total Leads Created: {db.query(Lead).count()}")
     print(f"Total Research Facts Created: {db.query(ResearchFact).count()}")
     print(f"Total Suppression Entries: {db.query(SuppressionList).count()}")
+    print(f"Total Classifier Feedback Exemplars: {db.query(ClassifierFeedback).count()}")
     db.close()
 
 if __name__ == "__main__":

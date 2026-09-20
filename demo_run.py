@@ -1,11 +1,11 @@
 """
-EchoReach Terminal Demo Script — Member 2 Task
-Executes full 6-agent loop with guardrail checks, persona simulation, webhook trigger, and reasoning trace.
+EchoReach Terminal Demo Script — Member 1 & 2 Execution
+Executes full LangGraph 6-agent state machine with Genericness Checker retry loop, guardrail checks, persona simulation, webhook trigger, and live reasoning trace.
 """
 import asyncio
 import sys
 from app.database import SessionLocal, Base, engine
-from app.models import Lead, Touch, DecisionLog, SuppressionList
+from app.models import Lead, Touch, DecisionLog, SuppressionList, ClassifierFeedback
 from app.services.agent_pipeline import AgentPipelineService
 from seed_data import seed_database
 
@@ -18,8 +18,8 @@ if hasattr(sys.stdout, 'reconfigure'):
 
 async def run_terminal_demo():
     print("==========================================================================")
-    print(" EchoReach — Personalized Multi-Touch Sales Outreach Agent Demo ")
-    print(" Track D2 | Member 2 (Backend, State & Integrations Lead) ")
+    print(" EchoReach — Autonomous Multi-Touch Sales Outreach Agent (LangGraph) ")
+    print(" Track D2 | Full 6-Agent State Machine & Guardrail Execution ")
     print("==========================================================================\n")
 
     # Ensure database is seeded
@@ -34,16 +34,14 @@ async def run_terminal_demo():
     print(f"Email: {lead.email} | Stage: {lead.stage}")
 
     print("\n--------------------------------------------------------------------------")
-    print("STEP 2: Triggering Research Agent & Drafting Agent")
+    print("STEP 2: Triggering LangGraph Pipeline (Research -> Drafting -> Genericness Checker)")
     print("--------------------------------------------------------------------------")
-    facts = await AgentPipelineService.run_research_agent(db, lead)
+    facts, touch = await AgentPipelineService.run_research_and_draft_graph(db, lead, touch_number=1)
     print(f"[+] Research Agent finished. Pulled {len(facts)} high-signal facts:")
     for f in facts:
         print(f"   * [{f.fact_type.upper()}] {f.content}")
 
-    print("\nGenerating personalized touch draft + running Genericness Checker retry loop...")
-    touch = AgentPipelineService.run_drafting_agent(db, lead, touch_number=1)
-    print(f"[+] Touch #{touch.touch_number} Draft Created (Status: {touch.status})")
+    print(f"\n[+] Drafting & Genericness Checker Graph completed (Touch ID: {touch.id}, Status: {touch.status})")
     print(f"Subject: {touch.subject}\n")
     print(f"Body:\n{touch.body}\n")
 
@@ -52,7 +50,7 @@ async def run_terminal_demo():
     print("--------------------------------------------------------------------------")
     success, msg = AgentPipelineService.process_human_approval(db, touch, action="approve")
     print(f"Guardrails & Sandbox Output: {msg}")
-    print(f"Touch Final Status: {touch.status}")
+    print(f"Touch Final Status: {touch.status} | Lead Stage: {lead.stage}")
 
     print("\n--------------------------------------------------------------------------")
     print("STEP 4: Prospect Persona Reply Simulator")
@@ -65,7 +63,7 @@ async def run_terminal_demo():
     print(f"\"{simulated_reply_text}\"\n")
 
     print("--------------------------------------------------------------------------")
-    print("STEP 5: Reply Classifier Agent & Next-Step Decision Agent")
+    print("STEP 5: Reply Classifier Agent (with Self-Improving Memory) & Next-Step Agent")
     print("--------------------------------------------------------------------------")
     pipeline_res = await AgentPipelineService.process_reply_and_next_step(
         db, lead, simulated_reply_text, persona_type="Eager Buyer"
@@ -75,7 +73,7 @@ async def run_terminal_demo():
     print(f"Reasoning: {pipeline_res['reasoning']}")
 
     print("\n--------------------------------------------------------------------------")
-    print("STEP 6: Printing Live Reasoning Trace / Decision Log Feed")
+    print("STEP 6: Printing Live Reasoning Trace / Decision Log Feed (Explainability)")
     print("--------------------------------------------------------------------------")
     logs = db.query(DecisionLog).filter(DecisionLog.lead_id == lead.id).order_by(DecisionLog.id.asc()).all()
     for idx, log in enumerate(logs, 1):
@@ -85,7 +83,7 @@ async def run_terminal_demo():
         print(f"    Output:    {log.output_summary}\n")
 
     print("==========================================================================")
-    print(" [SUCCESS] Full stateful lead sequence loop executed successfully!")
+    print(" [SUCCESS] Full stateful LangGraph lead sequence loop executed successfully!")
     print("==========================================================================")
     db.close()
 
